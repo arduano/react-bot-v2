@@ -1,0 +1,18 @@
+{
+  "name": "react-bot-v2",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "dev": "tsup --watch"
+  },
+  "dependencies": {
+    "@types/dotenv": "^8.2.0",
+    "@types/node": "^20.6.0",
+    "discord.js": "^14.13.0",
+    "dotenv": "^16.3.1",
+    "tsc": "^2.0.4",
+    "tsup": "^7.2.0",
+    "typescript": "^5.2.2"
+  }
+}

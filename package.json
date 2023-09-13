@@ -4,13 +4,13 @@
   "main": "index.js",
   "license": "MIT",
   "scripts": {
-    "dev": "tsup --watch"
+    "dev": "bun src/main.ts"
   },
   "dependencies": {
     "@types/async-lock": "^1.4.0",
     "@types/dotenv": "^8.2.0",
-    "@types/node": "^20.6.0",
     "async-lock": "^1.4.0",
+    "bun-types": "^1.0.1",
     "discord.js": "^14.13.0",
     "dotenv": "^16.3.1",
     "fast-deep-equal": "^3.1.3",

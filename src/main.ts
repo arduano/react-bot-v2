@@ -4,26 +4,75 @@ import {
   ButtonBuilder,
   ButtonStyle,
   Client,
+  Collection,
   GatewayIntentBits,
   GuildMember,
+  InteractionResponse,
+  Message,
+  MessageActionRowComponent,
+  MessageComponent,
   Options,
+  Role,
 } from "discord.js";
+import AsyncLock from "async-lock";
+import equals from "fast-deep-equal";
 
 import dotenv from "dotenv";
+import { LiveCache } from "./cache";
 dotenv.config();
 
 const client = new Client({
   intents: [GatewayIntentBits.MessageContent, GatewayIntentBits.Guilds],
   makeCache: Options.cacheWithLimits({
     ...Options.DefaultMakeCacheSettings,
+
+    AutoModerationRuleManager: 0,
+    ApplicationCommandManager: 0,
+    BaseGuildEmojiManager: 0,
+    DMMessageManager: 0,
+    GuildEmojiManager: 0,
+    GuildMemberManager: 0,
+    GuildBanManager: 0,
+    GuildForumThreadManager: 0,
+    GuildInviteManager: 0,
+    GuildMessageManager: 0,
+    GuildScheduledEventManager: 0,
+    GuildStickerManager: 0,
+    GuildTextThreadManager: 0,
+    MessageManager: 0,
+    PresenceManager: 0,
+    ReactionManager: 0,
+    ReactionUserManager: 0,
+    StageInstanceManager: 0,
+    ThreadManager: 0,
+    ThreadMemberManager: 0,
+    UserManager: 0,
+    VoiceStateManager: 0,
   }),
 });
 
 type RoleButton = {
   emoji: string;
-  name: string;
   roleId: string;
 };
+
+const userCache = new LiveCache<Set<string>>();
+
+const guildRoleFetch = new Map<string, Promise<Collection<string, Role>>>();
+
+function updateRolesForGuild(guild: string) {
+  guildRoleFetch.set(
+    guild,
+    client.guilds.fetch(guild).then((g) => g.roles.fetch()),
+  );
+}
+
+function getGuildRoles(guild: string) {
+  if (!guildRoleFetch.has(guild)) {
+    updateRolesForGuild(guild);
+  }
+  return guildRoleFetch.get(guild)!;
+}
 
 // [
 //   {
@@ -54,42 +103,34 @@ type RoleButton = {
 const roleButtons: RoleButton[] = [
   {
     emoji: "🎃",
-    name: "Among Us",
     roleId: "710829108715585566",
   },
   {
     emoji: "🎦",
-    name: "Movie Night",
     roleId: "710829185576206366",
   },
   {
     emoji: "🐺",
-    name: "Werewolf",
     roleId: "710827836033859654",
   },
   {
     emoji: "🔪",
-    name: "Mafia",
     roleId: "784657976593612831",
   },
   {
     emoji: "🎵",
-    name: "Music",
     roleId: "784660928859471892",
   },
   {
     emoji: "🌉",
-    name: "Cities: Skylines",
     roleId: "813762120826617866",
   },
   {
     emoji: "✊",
-    name: "Minecraft",
     roleId: "820204861245095998",
   },
   {
     emoji: "⛏️",
-    name: "Terraria",
     roleId: "820204949307785236",
   },
 ];
@@ -121,6 +162,13 @@ client.on("ready", async () => {
     return;
   }
 
+  if (channel.isDMBased()) {
+    console.log("No guild");
+    return;
+  }
+
+  updateRolesForGuild(channel.guildId!);
+
   const msg = await channel.messages.fetch(msgId);
 
   const interactionData: ButtonInteraction = {
@@ -131,29 +179,36 @@ client.on("ready", async () => {
     new ButtonBuilder()
       .setLabel("Change Roles")
       .setCustomId(JSON.stringify(interactionData))
-      .setStyle(ButtonStyle.Primary)
+      .setStyle(ButtonStyle.Primary),
   );
 
+  const roleText = roleButtons
+    .map((role) => `${role.emoji}: <@&${role.roleId}>`)
+    .join("\n");
+
   msg.edit({
-    content: "Click the buttons below to get your roles!",
-    components: [row],
+    content: roleText,
+    components: [row] as any,
   });
 });
 
-function buildActionRowForMember(member: GuildMember) {
+function buildActionRowForMember(
+  memberRoles: Set<string>,
+  allRoles: Collection<string, Role>,
+) {
   const rows: ActionRowBuilder[] = [];
 
   let row = new ActionRowBuilder();
 
   for (const roleButton of roleButtons) {
-    if (!member.roles.cache.has(roleButton.roleId)) {
+    if (!memberRoles.has(roleButton.roleId)) {
       const data: ButtonInteraction = {
         kind: "set-role",
         add: true,
         roleId: roleButton.roleId,
       };
       const button = new ButtonBuilder()
-        .setLabel(roleButton.name)
+        .setLabel(allRoles.get(roleButton.roleId)?.name ?? "")
         .setEmoji(roleButton.emoji)
         .setCustomId(JSON.stringify(data))
         .setStyle(ButtonStyle.Secondary);
@@ -165,7 +220,7 @@ function buildActionRowForMember(member: GuildMember) {
         roleId: roleButton.roleId,
       };
       const button = new ButtonBuilder()
-        .setLabel(roleButton.name)
+        .setLabel(allRoles.get(roleButton.roleId)?.name ?? "")
         .setEmoji(roleButton.emoji)
         .setCustomId(JSON.stringify(data))
         .setStyle(ButtonStyle.Primary);
@@ -184,60 +239,245 @@ function buildActionRowForMember(member: GuildMember) {
   return rows;
 }
 
-client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isButton()) {
-    return;
-  }
+function exists<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined;
+}
 
-  const interactionData: ButtonInteraction = JSON.parse(interaction.customId);
-
-  if (!interaction.guild) {
-    console.log("No guild");
-    return;
-  }
-
-  const member = await interaction.guild.members.fetch(interaction.user.id);
-
-  if (!member) {
-    console.log("No member");
-    return;
-  }
-
-  switch (interactionData.kind) {
-    case "change-roles": {
-      const rows = buildActionRowForMember(member);
-      interaction.reply({
-        ephemeral: true,
-        content: "Click the buttons below to get your roles!",
-        components: rows,
-      });
-      break;
-    }
-    case "set-role": {
-      const role = await interaction.guild.roles.fetch(interactionData.roleId);
-
-      if (!role) {
-        console.log("No role");
-        return;
+function guessRoleListFromComponents(
+  rows: ActionRow<MessageActionRowComponent>[],
+) {
+  const roles = rows
+    .flatMap((row) => row.components)
+    .map((component) => {
+      if (!component.customId) {
+        return null;
       }
 
-      if (interactionData.add) {
-        await member.roles.add(role);
+      const data: ButtonInteraction = JSON.parse(component.customId);
+      if (data.kind === "set-role" && !data.add) {
+        return data.roleId;
       } else {
-        await member.roles.remove(role);
+        return null;
       }
+    })
+    .filter(exists);
 
-      await member.fetch(true);
+  return new Set(roles);
+}
 
-      const rows = buildActionRowForMember(member);
+function buildMessageForMember(
+  memberRoles: Set<string>,
+  allRoles: Collection<string, Role>,
+) {
+  const rows = buildActionRowForMember(memberRoles, allRoles);
 
-      interaction.update({
-        content: "Click the buttons below to get your roles!",
-        components: rows,
-      });
-      break;
+  return {
+    content: "Click the buttons below to get your roles!",
+    components: rows as any,
+  };
+}
+
+// Used for cancelling previous interactions if multiple are run in parallel
+const userInteractionCounter = new Map<string, number>();
+
+function getNextUserInteractionCounterKey(user: string) {
+  const key = userInteractionCounter.get(user);
+  const newKey = key ? key + 1 : 1;
+  userInteractionCounter.set(user, newKey);
+
+  return newKey;
+}
+
+function isUserInteractionCounterKeyValid(user: string, key: number) {
+  const currentKey = userInteractionCounter.get(user);
+  return currentKey === key;
+}
+
+function deleteInteractionCounterKey(user: string) {
+  userInteractionCounter.delete(user);
+}
+
+client.on("interactionCreate", async (interaction) => {
+  try {
+    if (!interaction.isButton()) {
+      return;
     }
+
+    const interactionData: ButtonInteraction = JSON.parse(interaction.customId);
+
+    if (!interaction.guild) {
+      console.log("No guild");
+      return;
+    }
+
+    const guild = interaction.guild;
+
+    switch (interactionData.kind) {
+      case "change-roles": {
+        updateRolesForGuild(guild.id);
+
+        const member = await interaction.guild.members.fetch(
+          interaction.user.id,
+        );
+
+        if (!member) {
+          console.log("No member");
+          return;
+        }
+
+        const memberRoleIds = new Set(
+          member.roles.cache.map((role) => role.id),
+        );
+
+        interaction.reply({
+          ...buildMessageForMember(
+            memberRoleIds,
+            await getGuildRoles(guild.id),
+          ),
+          ephemeral: true,
+        });
+        break;
+      }
+      case "set-role": {
+        let intMessagePromise = interaction.deferUpdate();
+        await userCache.run(
+          interaction.user.id,
+          (current) => {
+            if (!current) {
+              current = guessRoleListFromComponents(
+                interaction.message.components,
+              );
+            } else {
+              current = new Set(current);
+            }
+
+            if (interactionData.add) {
+              current.add(interactionData.roleId);
+            } else {
+              current.delete(interactionData.roleId);
+            }
+
+            return current;
+          },
+          async (current) => {
+            const intMessage = await intMessagePromise;
+
+            const guessedMessageDetails = buildMessageForMember(
+              current,
+              await getGuildRoles(guild.id),
+            );
+            const updatePromise = intMessage.edit({
+              ...guessedMessageDetails,
+            });
+
+            const member = await guild.members.fetch(interaction.user.id);
+
+            if (!member) {
+              console.log("No member");
+              return;
+            }
+
+            if (interactionData.add) {
+              await member.roles.add(interactionData.roleId);
+            } else {
+              await member.roles.remove(interactionData.roleId);
+            }
+
+            await updatePromise;
+          },
+          async () => {
+            const intMessage = await intMessagePromise;
+
+            const member = await guild.members.fetch(interaction.user.id);
+
+            if (!member) {
+              console.log("No member");
+              return;
+            }
+
+            const roles = new Set(member.roles.cache.map((role) => role.id));
+
+            const details = buildMessageForMember(
+              roles,
+              await getGuildRoles(guild.id),
+            );
+
+            await intMessage.edit({
+              ...details,
+            });
+          },
+        );
+
+        // const guessedMemberRoles = guessRoleListFromComponents(
+        //   interaction.message.components
+        // );
+
+        // if (interactionData.add) {
+        //   guessedMemberRoles.add(interactionData.roleId);
+        // } else {
+        //   guessedMemberRoles.delete(interactionData.roleId);
+        // }
+
+        // const guessedMessageDetails = buildMessageForMember(
+        //   guessedMemberRoles,
+        //   await getGuildRoles(guild.id)
+        // );
+        // const m = await interaction.deferUpdate();
+        // const key = getNextUserInteractionCounterKey(interaction.user.id);
+        // await userLock.acquire(interaction.user.id, async () => {
+        //   let interactionUpdatePromise1: Promise<Message<boolean>> | null =
+        //     null;
+        //   if (isUserInteractionCounterKeyValid(interaction.user.id, key)) {
+        //     // Perform an "estimated" update for quicker feedback if no other updates are queued
+        //     interactionUpdatePromise1 = m.edit({
+        //       ...guessedMessageDetails,
+        //     });
+        //   }
+
+        //   const member = await guild.members.fetch(interaction.user.id);
+
+        //   if (!member) {
+        //     console.log("No member");
+        //     return;
+        //   }
+
+        //   if (interactionData.add) {
+        //     await member.roles.add(interactionData.roleId);
+        //   } else {
+        //     await member.roles.remove(interactionData.roleId);
+        //   }
+
+        //   if (!isUserInteractionCounterKeyValid(interaction.user.id, key)) {
+        //     return;
+        //   }
+
+        //   await member.fetch(true);
+
+        //   const roles = new Set(member.roles.cache.map((role) => role.id));
+
+        //   const realMessageDetails = buildMessageForMember(
+        //     roles,
+        //     await getGuildRoles(guild.id)
+        //   );
+
+        //   if (!equals(realMessageDetails, guessedMessageDetails)) {
+        //     await interactionUpdatePromise1;
+        //     await m.edit({
+        //       ...realMessageDetails,
+        //     });
+        //   }
+        // });
+
+        break;
+      }
+    }
+  } catch (e) {
+    console.error(e);
   }
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
+// TODO:
+// Create a better cache system for what roles a user has, to be more responsive
+// fix above

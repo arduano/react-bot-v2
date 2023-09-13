@@ -305,7 +305,25 @@ client.on("interactionCreate", async (interaction) => {
         break;
       }
       case "set-role": {
-        let intMessagePromise = interaction.deferUpdate();
+        const intMessagePromise = interaction.deferUpdate();
+
+        const updateRoles = async () => {
+          const member = await guild.members.fetch(interaction.user.id);
+
+          if (!member) {
+            console.log("No member");
+            return;
+          }
+
+          if (interactionData.add) {
+            await member.roles.add(interactionData.roleId);
+          } else {
+            await member.roles.remove(interactionData.roleId);
+          }
+        };
+
+        const updateRolesPromise = updateRoles();
+
         await userCache.run(
           interaction.user.id,
           (current) => {
@@ -337,23 +355,11 @@ client.on("interactionCreate", async (interaction) => {
               ...guessedMessageDetails,
             });
 
-            const member = await guild.members.fetch(interaction.user.id);
-
-            if (!member) {
-              console.log("No member");
-              return;
-            }
-
-            if (interactionData.add) {
-              await member.roles.add(interactionData.roleId);
-            } else {
-              await member.roles.remove(interactionData.roleId);
-            }
-
             await updatePromise;
           },
           async () => {
             const intMessage = await intMessagePromise;
+            await updateRolesPromise;
 
             const member = await guild.members.fetch(interaction.user.id);
 

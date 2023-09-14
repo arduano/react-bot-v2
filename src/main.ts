@@ -14,12 +14,14 @@ import {
   Options,
   Role,
 } from "discord.js";
-import AsyncLock from "async-lock";
-import equals from "fast-deep-equal";
 
 import dotenv from "dotenv";
 import { LiveCache } from "./cache";
+import z from "zod";
+import { ReactConfig, readConfig } from "./config";
 dotenv.config();
+
+const reactConfig = await readConfig();
 
 const client = new Client({
   intents: [GatewayIntentBits.MessageContent, GatewayIntentBits.Guilds],
@@ -51,19 +53,10 @@ const client = new Client({
   }),
 });
 
-type RoleButton = {
-  emoji: string;
-  roleId: string;
-};
-
-type ReactConfig = {
-  channel: string;
-  message: string;
-  reactMap: Record<string, string>;
-};
-
+// Live cache for fixing race conditions
 const userCache = new LiveCache<Set<string>>();
 
+// Cache for roles (for role names)
 const guildRoleFetch = new Map<string, Promise<Collection<string, Role>>>();
 
 function updateRolesForGuild(guild: string) {
@@ -80,32 +73,7 @@ function getGuildRoles(guild: string) {
   return guildRoleFetch.get(guild)!;
 }
 
-const reactConfig: ReactConfig[] = [
-  {
-    channel: "1146312406033764452",
-    message: "1150315956560728155",
-    reactMap: {
-      "🎃": "710829108715585566",
-      "🎦": "710829185576206366",
-      "🐺": "710827836033859654",
-      "🔪": "784657976593612831",
-      "🎵": "784660928859471892",
-      "🌉": "813762120826617866",
-      "✊": "820204861245095998",
-      "⛏️": "820204949307785236",
-      "📝": "820205043747389440",
-      "🏹": "820204970783014922",
-      "🏎️": "820204912251633685",
-      "🎮": "821021864855076916",
-      "🧂": "825277377860206622",
-      "🔫": "825276637095526400",
-      "🚮": "825276668570370069",
-      "📇": "837292714046390312",
-      "🌎": "831786778998210590",
-    },
-  },
-];
-
+// For customIds on buttons
 type ButtonInteraction =
   | {
       kind: "change-roles";
@@ -117,6 +85,7 @@ type ButtonInteraction =
       roleId: string;
     };
 
+// Prepare a message on startup
 async function prepareMessage(config: ReactConfig) {
   const channel = await client.channels.fetch(config.channel);
   if (!channel) {
@@ -324,9 +293,12 @@ client.on("interactionCreate", async (interaction) => {
 
         const updateRolesPromise = updateRoles();
 
+        // This multi-stage process is used to make the buttons feel responsive while
+        // queueing multiple stages and avoiding race conditions
         await userCache.run(
           interaction.user.id,
           (current) => {
+            // First, we infer the user's current roles from the message's button colors
             if (!current) {
               current = guessRoleListFromComponents(
                 interaction.message.components
@@ -344,6 +316,7 @@ client.on("interactionCreate", async (interaction) => {
             return current;
           },
           async (current) => {
+            // Next, we edit the message with the updated inferred roles
             const intMessage = await intMessagePromise;
 
             const guessedMessageDetails = buildMessageForMember(
@@ -358,6 +331,7 @@ client.on("interactionCreate", async (interaction) => {
             await updatePromise;
           },
           async () => {
+            // Finally, we reconcile the user's actual roles and edit the message again with the real roles
             const intMessage = await intMessagePromise;
             await updateRolesPromise;
 

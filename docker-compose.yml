@@ -3,6 +3,7 @@ version: "3"
 services:
   bot:
     build: .
-    volumes: []
     environment:
       - TOKEN=${TOKEN}
+    volumes:
+      - ./config.json:/app/config.json

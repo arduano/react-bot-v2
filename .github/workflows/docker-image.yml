@@ -31,4 +31,4 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ghcr.io/arduano/react-bot-v2:$(date +%s),ghcr.io/arduano/react-bot-v2:latest
+          tags: ghcr.io/arduano/react-bot-v2:${{ github.sha }},ghcr.io/arduano/react-bot-v2:latest

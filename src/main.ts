@@ -234,6 +234,14 @@ function buildMessageForMember(
   };
 }
 
+function safeJsonParse<T>(str: string): T | null {
+  try {
+    return JSON.parse(str);
+  } catch (e) {
+    return null;
+  }
+}
+
 client.on("interactionCreate", async (interaction) => {
   try {
     if (!interaction.isButton()) {
@@ -241,7 +249,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     const interactionDataMaybe = buttonInteraction.safeParse(
-      JSON.parse(interaction.customId)
+      safeJsonParse(interaction.customId)
     );
 
     if (!interactionDataMaybe.success) {

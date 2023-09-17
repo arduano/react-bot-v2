@@ -74,16 +74,19 @@ function getGuildRoles(guild: string) {
 }
 
 // For customIds on buttons
-type ButtonInteraction =
-  | {
-      kind: "change-roles";
-    }
-  | {
-      kind: "set-role";
-      originalMsg: string;
-      add: boolean;
-      roleId: string;
-    };
+const buttonInteraction = z.union([
+  z.object({
+    kind: z.literal("change-roles"),
+  }),
+  z.object({
+    kind: z.literal("set-role"),
+    originalMsg: z.string(),
+    add: z.boolean(),
+    roleId: z.string(),
+  }),
+]);
+
+type ButtonInteraction = z.infer<typeof buttonInteraction>;
 
 // Prepare a message on startup
 async function prepareMessage(config: ReactConfig) {
@@ -237,7 +240,15 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    const interactionData: ButtonInteraction = JSON.parse(interaction.customId);
+    const interactionDataMaybe = buttonInteraction.safeParse(
+      JSON.parse(interaction.customId)
+    );
+
+    if (!interactionDataMaybe.success) {
+      return;
+    }
+
+    const interactionData = interactionDataMaybe.data;
 
     if (!interaction.guild) {
       console.log("No guild");
